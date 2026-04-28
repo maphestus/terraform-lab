@@ -1,32 +1,80 @@
 terraform {
   required_providers {
-    virtualbox = {
-      source = "terra-farm/virtualbox"
-      version = "0.2.1"
+    google = {
+      source  = "hashicorp/google"
+      version = "7.20.0"
     }
   }
 }
 
-# There are currently no configuration options for the provider itself.
+data "external" "my_ip" {
+  program = ["bash", "-c", "curl -s https://wtfismyip.com/json | jq '{ip: .YourFuckingIPAddress}'"]
+}
 
-resource "virtualbox_vm" "node" {
-  count     = 2
-  name      = format("node-%02d", count.index + 1)
-  image     = "https://app.vagrantup.com/ubuntu/boxes/bionic64/versions/20180903.0.0/providers/virtualbox.box"
-  cpus      = 2
-  memory    = "512 mib"
-  user_data = file("${path.module}/user_data")
+output "my_ip" {
+  value = data.external.my_ip.result.ip
+}
 
-  network_adapter {
-    type           = "hostonly"
-    host_interface = "vboxnet1"
+provider "google" {
+  project = "gcp-headstart-educative-414223"
+  region  = "us-central1"
+  zone    = "us-central1-f"
+}
+
+resource "google_compute_network" "vpc_network" {
+  name = "terraform-network"
+}
+
+resource "google_compute_instance"  "micro-1" {
+  name         = "micro-1"
+  machine_type = "e2-micro"
+  zone         = "us-central1-f"
+  tags =  ["ssh-enabled"]
+
+  boot_disk {
+    initialize_params {
+      image = "debian-cloud/debian-13"
+    }
+  }
+
+  network_interface {
+    network = google_compute_network.vpc_network.id
+    access_config {}
   }
 }
 
-output "IPAddr" {
-  value = element(virtualbox_vm.node.*.network_adapter.0.ipv4_address, 1)
+resource "google_compute_instance"  "micro-2" {
+  name         = "micro-2"
+  machine_type = "e2-micro"
+  zone         = "us-central1-f"
+  tags =  ["ssh-enabled"]
+
+  boot_disk {
+    initialize_params {
+      image = "debian-cloud/debian-13"
+    }
+  }
+
+  network_interface {
+    network = google_compute_network.vpc_network.id
+    access_config {}
+  }
 }
 
-output "IPAddr_2" {
-  value = element(virtualbox_vm.node.*.network_adapter.0.ipv4_address, 2)
+resource "google_compute_firewall" "allow_ssh" {
+  name    = "allow-ssh"
+  network = google_compute_network.vpc_network.id
+
+  allow {
+    protocol = "tcp"
+    ports    = ["22"]
+  }
+
+  source_ranges = ["${data.external.my_ip.result.ip}/32"]
+
+  target_tags = ["ssh-enabled"]
+
+  log_config {
+    metadata = "INCLUDE_ALL_METADATA"  # or "EXCLUDE_ALL_METADATA" to reduce cost
+  }
 }
